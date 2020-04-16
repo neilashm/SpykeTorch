@@ -362,58 +362,69 @@ class ModSTDP(nn.Module):
 
 class HopfieldNetwork(nn.Module):
 
-    def __init__(self):
+    def __init__(self, resolution=4):
         super(HopfieldNetwork, self).__init__()
+        # self.norm_factor
+        self.resolution = resolution
 
     def train_weights(self, train_patterns):
         self.num_neurons = train_patterns[0].size(0)*train_patterns[0].size(1)
-        self.num_data = 1#len(train_patterns)
+        self.num_data = len(train_patterns)
         self.W = torch.zeros(self.num_neurons,self.num_neurons)
 
-        rho = torch.sum(torch.tensor([torch.sum(pattern) for pattern in train_patterns]))/(self.num_neurons*self.num_data)
+       
 
-        ones = torch.ones(self.num_neurons)
-        minus_ones = -1*torch.ones(self.num_neurons)
         
         for pattern in train_patterns:
-            pattern = pattern.reshape(self.num_neurons) - rho
+            pattern = pattern.reshape(self.num_neurons) #- rho
             #pattern = torch.where(pattern>0,ones,minus_ones) #- rho
-            self.W += torch.ger((pattern-4),(pattern-4))
+            self.W += torch.ger((pattern-self.resolution),(pattern-self.resolution))
 
         #print(self.W)
         self.W = self.W - torch.diag(torch.diag(self.W))
         self.W /= self.num_data
+
+
+        rho = torch.sum(torch.tensor([torch.sum(pattern) for pattern in train_patterns]))/((self.num_neurons)*self.num_data)
+        denominator = (self.num_neurons-1)*(torch.max(self.W)-torch.min(self.W))
+        self.norm_factor = (self.resolution/(denominator*rho))
+
         #self.W = torch.clamp(self.W,0,1)
+
+              # # Make weights to range between -1 and 1
+        # for weight_index in range(len(self.W)):
+        #     min = torch.min(self.W[weight_index])
+        #     self.W[weight_index] = self.W[weight_index] - min
+        #     sum = torch.sum(self.W[weight_index])
+        #     self.W[weight_index] = (self.W[weight_index]*4)/sum
+        #     self.W[weight_index] = self.W[weight_index] + (min*4/sum)
+
 
     def energy(self,state):
         return -0.5 * torch.matmul(torch.matmul(state.T,self.W),state) + torch.sum(state)
 
     def forward(self, input, num_iter=20):
         predicted=[]
-        timesteps=torch.Tensor([-4.  , -3, -2 , -1,  0.  ,  1,  2 ,  3,  4])#[-1.  , -0.75, -0.5 , -0.25,  0.  ,  0.25,  0.5 ,  0.75, 1.])
+        timesteps=torch.linspace(-self.resolution, self.resolution, self.resolution*2 + 1)#[-1.  , -0.75, -0.5 , -0.25,  0.  ,  0.25,  0.5 ,  0.75, 1.])
+        
         self.dim_size=int(torch.sqrt(torch.Tensor([self.num_neurons]))[0])
         for init_state in input:
             state=init_state
             energy=self.energy(state)
             #print(energy)
-            print(torch.unique(init_state))
+            # print(torch.unique(init_state))
 
-            activations=[]
+            # activations=[]
             for step in range(num_iter):
                 indices=torch.randperm(self.num_neurons)
                 for idx in indices:
-                    unnorm_activation = torch.matmul(self.W[idx],state)
-                    print(unnorm_activation)
-                    norm_activation = (unnorm_activation*4)/((self.num_neurons-1)*torch.max(self.W)) # Fix this normalization
-                    activations.append(norm_activation)
-                    print(norm_activation)
+                    unnorm_activation = torch.matmul(self.W[idx],state)    
+                    norm_activation = unnorm_activation*self.norm_factor # Fix this normalization
+                    # activations.append(norm_activation)
                     distance = torch.abs(norm_activation-timesteps)
-                    print(distance)
                     closest_timestep_idx = torch.argmin(distance)
-                    print(closest_timestep_idx)
                     state[idx] = timesteps[closest_timestep_idx]
-                    print(state[idx])
-                
+                                    
                 updated_energy = self.energy(state)
                 #print(updated_energy)
 
@@ -427,11 +438,12 @@ class HopfieldNetwork(nn.Module):
             if len(predicted)==0:
                 predicted.append(state.reshape(self.dim_size,self.dim_size))
                 
-            print(max(activations))
-            print(min(activations))
-            print(torch.max(self.W))
-            print(torch.sum(self.W))
-            print(self.num_neurons)
+            # print(max(activations))
+            # print(min(activations))
+            # print(torch.max(self.W))
+            # print(torch.min(self.W))
+            # print(torch.sum(self.W))
+        print(timesteps)
 
         return torch.stack(predicted)
 
