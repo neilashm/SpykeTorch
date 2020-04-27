@@ -380,7 +380,8 @@ class HopfieldNetwork(nn.Module):
             #pattern = torch.where(pattern>4,ones,zeros) #- rho
             self.W += torch.ger(pattern,pattern)
 
-        #print(self.W)
+
+        #print(self.W.size())
         self.W = self.W - torch.diag(torch.diag(self.W))
         self.W /= self.num_data
         self.W /= 8#= torch.clamp(self.W,0,8)
@@ -395,7 +396,84 @@ class HopfieldNetwork(nn.Module):
     def energy(self,state):
         return -0.5 * torch.matmul(torch.matmul(state.T,self.W),state) + torch.sum(state)
 
-    def forward(self, input, threshold=0, num_iter=20):
+    def stdpWeights(self, weights, state, stdpStrength):
+        #equally increment weights (in total) as much as total decrementations
+        ratio = sum(state)/state.size(0)
+        incAmount = (stdpStrength) / ratio
+        decAmount = (stdpStrength) / (1-ratio)
+
+        weights += incAmount*state
+        weights += decAmount*(1-state)
+        return weights
+                
+
+
+    def forward(self, input, threshold=0, num_iter=20, stdpStrength = 0.1):
+        predicted=[]
+        max_timestep=8
+
+        #self.dim_size=int(torch.sqrt(torch.Tensor([self.num_neurons]))[0])
+        self.dim_size=28
+        #thresholds=[240,240,240,500,400,300,200,100]
+        for init_state in input: #init_state = 8x784
+            state=init_state
+            energy=self.energy(torch.sum(state,dim=0)) #state sum = size 784 
+
+            activations=[]
+            for step in range(num_iter):
+                indices=torch.randperm(self.num_neurons) #784
+                for idx in indices:
+                    #print('index:', idx)
+                    output_time=-1
+                    new_neuron_state=torch.zeros(state.size(0))
+                    for time in range(max_timestep):
+                        current_membrane_potential = torch.matmul(self.W[idx],state[time])
+                        #print('time:',time)
+                        #print(state[time])
+                        if current_membrane_potential >= threshold: #(max_timestep-time)*threshold:
+                            output_time = time
+                            #print('index:',idx)
+                            #print('time', output_time)
+                            self.W[idx] = self.stdpWeights(self.W[idx],state[time], stdpStrength)
+                            break
+                    if output_time != -1:
+                        new_neuron_state[output_time:max_timestep] = 1
+
+                    state[:,idx]=new_neuron_state
+                
+                    print(idx)
+                updated_energy = self.energy(torch.sum(state,dim=0))
+
+                if energy == updated_energy:
+                    predicted.append(state.reshape(8,self.dim_size,self.dim_size))
+                    break
+
+                energy = updated_energy
+
+            if len(predicted)==0:
+                predicted.append(state.reshape(8,self.dim_size,self.dim_size))
+                
+            #print(max(activations))
+            #print(min(activations))
+            # print(torch.max(self.W))
+            # print(torch.min(self.W))
+            # print(torch.sum(self.W))
+            #print(timesteps)
+
+        print(self.W.max(), "^^^^^^^^", self.W.min())
+
+        #this is really slow need to figure out someother way
+        #don't let weights go past 0 to 8
+        for i in range(0,self.W.size(0)):
+            for j in range(0,self.W.size(1)):
+                if self.W[i,j] < 0:
+                    self.W[i,j] = 0
+                elif self.W[i,j] > 8:
+                    self.W[i,j] = 8
+
+        return torch.stack(predicted)
+
+    def old_forward(self, input, threshold=0, num_iter=20):
         predicted=[]
         max_timestep=8
 
@@ -417,7 +495,7 @@ class HopfieldNetwork(nn.Module):
                         current_membrane_potential = torch.matmul(self.W[idx],state[time])
                         #print('time:',time)
                         #print(state[time])
-                        if current_membrane_potential >= (max_timestep-time)*threshold:
+                        if current_membrane_potential >= threshold: #(max_timestep-time)*threshold:
                             output_time = time
                             print('index:',idx)
                             print('time', output_time)
