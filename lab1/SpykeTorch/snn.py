@@ -448,6 +448,8 @@ class HopfieldNetwork(nn.Module):
                     predicted.append(state.reshape(8,self.dim_size,self.dim_size))
                     break
 
+                print("going to iteration number:", step)
+
                 energy = updated_energy
 
             if len(predicted)==0:
@@ -462,14 +464,8 @@ class HopfieldNetwork(nn.Module):
 
         print(self.W.max(), "^^^^^^^^", self.W.min())
 
-        #this is really slow need to figure out someother way
         #don't let weights go past 0 to 8
-        for i in range(0,self.W.size(0)):
-            for j in range(0,self.W.size(1)):
-                if self.W[i,j] < 0:
-                    self.W[i,j] = 0
-                elif self.W[i,j] > 8:
-                    self.W[i,j] = 8
+        self.W = torch.clamp(self.W, 0, 8)
 
         return torch.stack(predicted)
 
