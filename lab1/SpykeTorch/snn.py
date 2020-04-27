@@ -408,7 +408,7 @@ class HopfieldNetwork(nn.Module):
                 
 
 
-    def forward(self, input, threshold=0, num_iter=20, stdpStrength = 0.1):
+    def forward(self, input, threshold=0, num_iter=20, stdpStrength = 0.005):
         predicted=[]
         max_timestep=8
 
@@ -430,7 +430,7 @@ class HopfieldNetwork(nn.Module):
                         current_membrane_potential = torch.matmul(self.W[idx],state[time])
                         #print('time:',time)
                         #print(state[time])
-                        if current_membrane_potential >= threshold: #(max_timestep-time)*threshold:
+                        if current_membrane_potential >= (max_timestep-time)*threshold:
                             output_time = time
                             #print('index:',idx)
                             #print('time', output_time)
@@ -440,8 +440,9 @@ class HopfieldNetwork(nn.Module):
                         new_neuron_state[output_time:max_timestep] = 1
 
                     state[:,idx]=new_neuron_state
-                
-                    print(idx)
+                    
+                #don't let weights go past 0 to 8
+                self.W = torch.clamp(self.W, 0, 8)
                 updated_energy = self.energy(torch.sum(state,dim=0))
 
                 if energy == updated_energy:
@@ -451,6 +452,7 @@ class HopfieldNetwork(nn.Module):
                 print("going to iteration number:", step)
 
                 energy = updated_energy
+                
 
             if len(predicted)==0:
                 predicted.append(state.reshape(8,self.dim_size,self.dim_size))
@@ -462,10 +464,6 @@ class HopfieldNetwork(nn.Module):
             # print(torch.sum(self.W))
             #print(timesteps)
 
-        print(self.W.max(), "^^^^^^^^", self.W.min())
-
-        #don't let weights go past 0 to 8
-        self.W = torch.clamp(self.W, 0, 8)
 
         return torch.stack(predicted)
 
