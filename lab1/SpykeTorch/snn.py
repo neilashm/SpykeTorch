@@ -441,7 +441,8 @@ class HopfieldNetwork(nn.Module):
         self.old_train_weights(train_patterns); return
         self.num_neurons = train_patterns[0].size(0)*train_patterns[0].size(1)
         self.num_data = len(train_patterns)
-        self.W = torch.zeros(self.num_neurons,self.num_neurons)#torch.randint(0,8,(self.num_neurons,self.num_neurons)).type(torch.FloatTensor)
+        self.W = torch.zeros(self.num_neurons,self.num_neurons)
+        #self.W = torch.randint(0,8,(self.num_neurons,self.num_neurons)).type(torch.FloatTensor)
 
 
     def STDP_weights(self, all_input_spikes, all_output_spikes):
