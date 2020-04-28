@@ -438,6 +438,7 @@ class HopfieldNetwork(nn.Module):
         #self.norm_factor = (self.resolution/(denominator*rho))
 
     def train_weights(self, train_patterns):
+        self.old_train_weights(train_patterns); return
         self.num_neurons = train_patterns[0].size(0)*train_patterns[0].size(1)
         self.num_data = len(train_patterns)
         self.W = torch.zeros(self.num_neurons,self.num_neurons)#torch.randint(0,8,(self.num_neurons,self.num_neurons)).type(torch.FloatTensor)
@@ -488,7 +489,7 @@ class HopfieldNetwork(nn.Module):
     def energy(self,state):
         return -0.5 * torch.matmul(torch.matmul(state.T,self.W),state) + torch.sum(state)
 
-    def forward(self, input, threshold=0, num_iter=20):
+    def forward(self, input, threshold=0, num_iter=20, noSTDP=False):
         predicted=[]
         max_timestep=8
 
@@ -510,7 +511,7 @@ class HopfieldNetwork(nn.Module):
                         current_membrane_potential = torch.matmul(self.W[idx],state[time])
                         #print('time:',time)
                         #print(state[time])
-                        if current_membrane_potential >= (max_timestep-time)*threshold:
+                        if current_membrane_potential >= threshold: #(max_timestep-time)*threshold:
                             output_time = time
                             #print('index:',idx)
                             #print('time', output_time)
@@ -524,9 +525,9 @@ class HopfieldNetwork(nn.Module):
 
                 if energy == updated_energy:
                     predicted.append(state.reshape(8,self.dim_size,self.dim_size))
+                    print("took \t ", step, " iterations")
                     break
 
-                print("Iteration: ", step)
                 
                 energy = updated_energy
 
@@ -539,8 +540,10 @@ class HopfieldNetwork(nn.Module):
             # print(torch.min(self.W))
             # print(torch.sum(self.W))
             #print(timesteps)
-            
+            if (noSTDP):
+                continue
             self.STDP_weights(init_state,predicted[0].reshape(8,784))
+
 
         return torch.stack(predicted)
 
