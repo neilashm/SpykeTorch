@@ -286,9 +286,9 @@ class LocalConvolution(nn.Module):
         self.groups = 1
         
         ########## UNCOMMENT AND COMPLETE THIS PART ##########
-#         self.rows = ??
-#         self.cols = ??
-#         self.weight = ??
+        self.rows = int(((self.input_size[0]-self.kernel_size[0])/self.stride)+1) # fix later
+        self.cols = int(((self.input_size[1]-self.kernel_size[1])/self.stride)+1) # fix later
+        self.weight = torch.zeros(self.rows,self.cols,self.out_channels,self.in_channels,self.kernel_size[0],self.kernel_size[1])
         ######################################################
         
         self.reset_weight()
@@ -305,11 +305,6 @@ class LocalConvolution(nn.Module):
         self.weight.copy_(target)
 
     def forward(self, input):
-
-        print(input.shape)
-        print(input)
-
-        return
     # forward function is called when you pass data (input) into the already instantiated class
     # Args: input - 4D spike wave tensor that was input to the Excitatory neurons.
     #               Its dimensions are (time,in_channels,height,width).
@@ -324,7 +319,16 @@ class LocalConvolution(nn.Module):
     # stride across the input to create multiple columns.
         
         ### *** WRITE YOUR CONVOLUTION FUNCTION HERE *** ###
-        
+        output = []
+        output = torch.zeros(input.size(0),self.out_channels,self.rows,self.cols)
+        for i in range(0,self.rows,self.stride):
+            for j in range(0,self.cols,self.stride):
+
+                result = fn.conv2d(input[:,:,i:i+self.kernel_size[0],j:j+self.kernel_size[1]],self.weight[i,j,:,:,:,:],bias=self.bias,stride=self.stride,padding=self.padding,dilation=self.dilation,groups=self.groups)
+
+                output[:,:,i,j] = result.squeeze(3).squeeze(2)
+
+        return output
         
     
 
@@ -345,9 +349,13 @@ class ModSTDP(nn.Module):
     def __init__(self, layer, ucapture, uminus, usearch, ubackoff, umin, maxweight):
         super(ModSTDP, self).__init__()
         # Initialize your variables here, including any Bernoulli Random Variable distributions
-        
-    
-
+        self.layer = layer
+        self.ucapture = Bernoulli(ucapture)
+        self.uminus = Bernoulli(uminus)
+        self.usearch = Bernoulli(usearch)
+        self.ubackoff = Bernoulli(ubackoff)
+        self.umin = Bernoulli(umin)
+        self.maxweight = maxweight
 
     # forward function is called when you pass data (input and output spikes) into the already instantiated class
     # Args: input_spikes - 4D spike wave tensor that was input to the Excitatory neurons. Its dimensions are
@@ -355,33 +363,70 @@ class ModSTDP(nn.Module):
     #       output_spikes - 4D spike wave tensor that is the output after Lateral Inhibition
     # This function does not need to return anything.
     
-    def forward(self, input_spikes, output_spikes):
+    def forward(self, all_input_spikes, all_output_spikes):
         # Actual training rule goes here
         # Modify the weights of the corresponding layer in place
-        return
+
+        all_weights = self.W.copy()
+        all_weights = torch.where(all_weights<0,torch.zeros(all_weights.size()),all_weights)
+        all_weights = torch.where(all_weights>8,8*torch.ones(all_weights.size()),all_weights)
+
+        all_output_spikes = 8-torch.sum(all_output_spikes,0)
+        all_input_spikes = 8-torch.sum(all_input_spikes,0)
+
+        #for r in range(0,self.layer.rows,self.layer.stride):
+        #    for c in range(0,self.layer.cols,self.layer.stride):
+        for neuron in range(self.num_neurons):
+            #input_spikes = input_spikes[:,r:r+self.layer.kernel_size[0],c:c+self.layer.kernel_size[1]].unsqueeze(0).expand(self.layer.out_channels,-1,-1,-1)
+            #output_spikes = output_spikes[:,r,c].unsqueeze(1).unsqueeze(2).unsqueeze(3).expand(-1,self.layer.in_channels,self.layer.kernel_size[0],self.layer.kernel_size[1])
+            #weights = weights[r,c,:,:,:,:]
+            input_spikes = all_input_spikes[neuron]
+            output_spikes = all_output_spikes[neuron]
+            weights = all_weights[neuron]
+            
+            fplus = Bernoulli((weights/8)*(2-(weights/8))).sample()
+            fminus = Bernoulli((1-(weights/8))*(1+(weights/8))).sample()
+
+            branch_one = torch.where((input_spikes < 8) & (output_spikes < 8) & (input_spikes <= output_spikes),weights+self.ucapture.sample(sample_shape=weights.size())*torch.max(fplus,self.umin.sample(sample_shape=weights.size())),weights)
+
+            branch_two = torch.where((input_spikes < 8) & (output_spikes < 8) & (input_spikes > output_spikes),branch_one-self.uminus.sample(sample_shape=weights.size())*torch.max(fminus,self.umin.sample(sample_shape=weights.size())),branch_one)
+
+            branch_three = torch.where((input_spikes < 8) & (output_spikes == 8),branch_two+self.usearch.sample(sample_shape=weights.size())*torch.max(fplus,self.umin.sample(sample_shape=weights.size())),branch_two)
+
+            branch_four = torch.where((input_spikes == 8) & (output_spikes < 8),branch_three-self.ubackoff.sample(sample_shape=weights.size())*torch.max(fminus,self.umin.sample(sample_shape=weights.size())),branch_three)
+            
+            all_weights[neuron] = weights
+
+        self.W = all_weights
+        
 
 class HopfieldNetwork(nn.Module):
 
-    def __init__(self, resolution=4):
+    def __init__(self, ucapture, uminus, usearch, ubackoff, umin, maxweight):
         super(HopfieldNetwork, self).__init__()
         # self.norm_factor
         #self.resolution = resolution
+        self.ucapture = Bernoulli(ucapture)
+        self.uminus = Bernoulli(uminus)
+        self.usearch = Bernoulli(usearch)
+        self.ubackoff = Bernoulli(ubackoff)
+        self.umin = Bernoulli(umin)
+        self.maxweight = maxweight
 
     def train_weights(self, train_patterns):
-        self.num_neurons = train_patterns[0].size(0)*train_patterns[0].size(1)
-        self.num_data = len(train_patterns)
+        self.num_neurons = train_patterns.size(2)
+        self.num_data = train_patterns.size(0)
         self.W = torch.zeros(self.num_neurons,self.num_neurons)
 
         #zeros=torch.zeros(784)
         #ones=torch.ones(784)
 
         for pattern in train_patterns:
-            pattern = pattern.reshape(self.num_neurons) #- rho
+            pattern = torch.sum(pattern,dim=0) #- rho
             #pattern = torch.where(pattern>4,ones,zeros) #- rho
             self.W += torch.ger(pattern,pattern)
 
-
-        #print(self.W.size())
+        #print(self.W)
         self.W = self.W - torch.diag(torch.diag(self.W))
         self.W /= self.num_data
         self.W /= 8#= torch.clamp(self.W,0,8)
@@ -392,82 +437,58 @@ class HopfieldNetwork(nn.Module):
         #denominator = (self.num_neurons-1)*(torch.max(self.W)-torch.min(self.W))
         #self.norm_factor = (self.resolution/(denominator*rho))
 
+    def old_train_weights(self, train_patterns):
+        self.num_neurons = train_patterns.size(1)
+        self.num_data = train_patterns.size(0)
+        self.W = torch.zeros(self.num_neurons,self.num_neurons)#torch.randint(0,8,(self.num_neurons,self.num_neurons)).type(torch.FloatTensor)
+
+
+    def STDP_weights(self, all_input_spikes, all_output_spikes):
+        # Actual training rule goes here
+        # Modify the weights of the corresponding layer in place
+
+        all_weights = self.W.clone()
+        #all_weights = torch.where(all_weights<0,torch.zeros(all_weights.size()),all_weights)
+        #all_weights = torch.where(all_weights>8,8*torch.ones(all_weights.size()),all_weights)
+
+        all_output_spikes = 8-torch.sum(all_output_spikes,0)
+        all_input_spikes = 8-torch.sum(all_input_spikes,0)
+
+        #print(all_weights.shape)
+        #print(all_input_spikes.shape)
+        #print(all_output_spikes.shape)
+
+        #for r in range(0,self.layer.rows,self.layer.stride):
+        #    for c in range(0,self.layer.cols,self.layer.stride):
+        for neuron in range(self.num_neurons):
+            #input_spikes = input_spikes[:,r:r+self.layer.kernel_size[0],c:c+self.layer.kernel_size[1]].unsqueeze(0).expand(self.layer.out_channels,-1,-1,-1)
+            #output_spikes = output_spikes[:,r,c].unsqueeze(1).unsqueeze(2).unsqueeze(3).expand(-1,self.layer.in_channels,self.layer.kernel_size[0],self.layer.kernel_size[1])
+            #weights = weights[r,c,:,:,:,:]
+            input_spikes = all_input_spikes[neuron]
+            output_spikes = all_output_spikes[neuron]
+            weights = all_weights[neuron]
+            
+            fplus = Bernoulli((weights/8)*(2-(weights/8))).sample()
+            fminus = Bernoulli((1-(weights/8))*(1+(weights/8))).sample()
+
+            branch_one = torch.where((input_spikes < 8) & (output_spikes < 8) & (input_spikes <= output_spikes),weights+self.ucapture.sample(sample_shape=weights.size())*torch.max(fplus,self.umin.sample(sample_shape=weights.size())),weights)
+
+            branch_two = torch.where((input_spikes < 8) & (output_spikes < 8) & (input_spikes > output_spikes),branch_one-self.uminus.sample(sample_shape=weights.size())*torch.max(fminus,self.umin.sample(sample_shape=weights.size())),branch_one)
+
+            branch_three = torch.where((input_spikes < 8) & (output_spikes == 8),branch_two+self.usearch.sample(sample_shape=weights.size())*torch.max(fplus,self.umin.sample(sample_shape=weights.size())),branch_two)
+
+            branch_four = torch.where((input_spikes == 8) & (output_spikes < 8),branch_three-self.ubackoff.sample(sample_shape=weights.size())*torch.max(fminus,self.umin.sample(sample_shape=weights.size())),branch_three)
+            
+            all_weights[neuron] = branch_four
+
+        all_weights = torch.clamp(all_weights,0,8)
+        self.W = all_weights
+
 
     def energy(self,state):
         return -0.5 * torch.matmul(torch.matmul(state.T,self.W),state) + torch.sum(state)
 
-    def stdpWeights(self, weights, state, stdpStrength):
-        #equally increment weights (in total) as much as total decrementations
-        ratio = sum(state)/state.size(0)
-        incAmount = (stdpStrength) / ratio
-        decAmount = (stdpStrength) / (1-ratio)
-
-        weights += incAmount*state
-        weights += decAmount*(1-state)
-        return weights
-                
-
-
-    def forward(self, input, threshold=0, num_iter=20, stdpStrength = 0.005):
-        predicted=[]
-        max_timestep=8
-
-        #self.dim_size=int(torch.sqrt(torch.Tensor([self.num_neurons]))[0])
-        self.dim_size=28
-        #thresholds=[240,240,240,500,400,300,200,100]
-        for init_state in input: #init_state = 8x784
-            state=init_state
-            energy=self.energy(torch.sum(state,dim=0)) #state sum = size 784 
-
-            activations=[]
-            for step in range(num_iter):
-                indices=torch.randperm(self.num_neurons) #784
-                for idx in indices:
-                    #print('index:', idx)
-                    output_time=-1
-                    new_neuron_state=torch.zeros(state.size(0))
-                    for time in range(max_timestep):
-                        current_membrane_potential = torch.matmul(self.W[idx],state[time])
-                        #print('time:',time)
-                        #print(state[time])
-                        if current_membrane_potential >= (max_timestep-time)*threshold:
-                            output_time = time
-                            #print('index:',idx)
-                            #print('time', output_time)
-                            self.W[idx] = self.stdpWeights(self.W[idx],state[time], stdpStrength)
-                            break
-                    if output_time != -1:
-                        new_neuron_state[output_time:max_timestep] = 1
-
-                    state[:,idx]=new_neuron_state
-                    
-                #don't let weights go past 0 to 8
-                self.W = torch.clamp(self.W, 0, 8)
-                updated_energy = self.energy(torch.sum(state,dim=0))
-
-                if energy == updated_energy:
-                    predicted.append(state.reshape(8,self.dim_size,self.dim_size))
-                    break
-
-                print("going to iteration number:", step)
-
-                energy = updated_energy
-                
-
-            if len(predicted)==0:
-                predicted.append(state.reshape(8,self.dim_size,self.dim_size))
-                
-            #print(max(activations))
-            #print(min(activations))
-            # print(torch.max(self.W))
-            # print(torch.min(self.W))
-            # print(torch.sum(self.W))
-            #print(timesteps)
-
-
-        return torch.stack(predicted)
-
-    def old_forward(self, input, threshold=0, num_iter=20):
+    def forward(self, input, threshold=0, num_iter=20):
         predicted=[]
         max_timestep=8
 
@@ -475,7 +496,7 @@ class HopfieldNetwork(nn.Module):
         self.dim_size=28
         #thresholds=[240,240,240,500,400,300,200,100]
         for init_state in input:
-            state=init_state
+            state=init_state.clone()
             energy=self.energy(torch.sum(state,dim=0))
 
             activations=[]
@@ -489,10 +510,10 @@ class HopfieldNetwork(nn.Module):
                         current_membrane_potential = torch.matmul(self.W[idx],state[time])
                         #print('time:',time)
                         #print(state[time])
-                        if current_membrane_potential >= threshold: #(max_timestep-time)*threshold:
+                        if current_membrane_potential >= (max_timestep-time)*threshold:
                             output_time = time
-                            print('index:',idx)
-                            print('time', output_time)
+                            #print('index:',idx)
+                            #print('time', output_time)
                             break
                     if output_time != -1:
                         new_neuron_state[output_time:max_timestep] = 1
@@ -502,13 +523,15 @@ class HopfieldNetwork(nn.Module):
                 updated_energy = self.energy(torch.sum(state,dim=0))
 
                 if energy == updated_energy:
-                    predicted.append(state.reshape(8,self.dim_size,self.dim_size))
+                    predicted.append(state)#.reshape(8,self.dim_size,self.dim_size))
                     break
 
+                #print("Iteration: ", step)
+                
                 energy = updated_energy
 
             if len(predicted)==0:
-                predicted.append(state.reshape(8,self.dim_size,self.dim_size))
+                predicted.append(state)#.reshape(8,self.dim_size,self.dim_size))
                 
             #print(max(activations))
             #print(min(activations))
@@ -516,9 +539,10 @@ class HopfieldNetwork(nn.Module):
             # print(torch.min(self.W))
             # print(torch.sum(self.W))
             #print(timesteps)
+            
+            #self.STDP_weights(init_state,predicted[0].reshape(8,784))
 
-        return torch.stack(predicted)
-
+        return torch.stack(predicted,dim=0)
 
 
         
