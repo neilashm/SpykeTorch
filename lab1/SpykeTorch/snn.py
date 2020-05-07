@@ -413,7 +413,7 @@ class HopfieldNetwork(nn.Module):
         self.umin = Bernoulli(umin)
         self.maxweight = maxweight
 
-    def old_train_weights(self, train_patterns):
+    def hebbian_train_weights(self, train_patterns):
         self.num_neurons = train_patterns[0].size(0)*train_patterns[0].size(1)
         self.num_data = len(train_patterns)
         self.W = torch.zeros(self.num_neurons,self.num_neurons)
@@ -433,39 +433,26 @@ class HopfieldNetwork(nn.Module):
         #self.W = torch.round_(self.W)
 
 
-        #rho = torch.sum(torch.tensor([torch.sum(pattern) for pattern in train_patterns]))/((self.num_neurons)*self.num_data)
-        #denominator = (self.num_neurons-1)*(torch.max(self.W)-torch.min(self.W))
-        #self.norm_factor = (self.resolution/(denominator*rho))
-
     def train_weights(self, train_patterns):
-        self.old_train_weights(train_patterns); return
+        self.hebbian_train_weights(train_patterns); return #remove this line if you want weight initialization of 0
         self.num_neurons = train_patterns[0].size(0)*train_patterns[0].size(1)
         self.num_data = len(train_patterns)
         self.W = torch.zeros(self.num_neurons,self.num_neurons)
+
+        #uncomment next line for random weight initialization
         #self.W = torch.randint(0,8,(self.num_neurons,self.num_neurons)).type(torch.FloatTensor)
 
 
     def STDP_weights(self, all_input_spikes, all_output_spikes):
         # Actual training rule goes here
-        # Modify the weights of the corresponding layer in place
 
         all_weights = self.W.clone()
-        #all_weights = torch.where(all_weights<0,torch.zeros(all_weights.size()),all_weights)
-        #all_weights = torch.where(all_weights>8,8*torch.ones(all_weights.size()),all_weights)
 
         all_output_spikes = 8-torch.sum(all_output_spikes,0)
         all_input_spikes = 8-torch.sum(all_input_spikes,0)
 
-        #print(all_weights.shape)
-        #print(all_input_spikes.shape)
-        #print(all_output_spikes.shape)
 
-        #for r in range(0,self.layer.rows,self.layer.stride):
-        #    for c in range(0,self.layer.cols,self.layer.stride):
         for neuron in range(self.num_neurons):
-            #input_spikes = input_spikes[:,r:r+self.layer.kernel_size[0],c:c+self.layer.kernel_size[1]].unsqueeze(0).expand(self.layer.out_channels,-1,-1,-1)
-            #output_spikes = output_spikes[:,r,c].unsqueeze(1).unsqueeze(2).unsqueeze(3).expand(-1,self.layer.in_channels,self.layer.kernel_size[0],self.layer.kernel_size[1])
-            #weights = weights[r,c,:,:,:,:]
             input_spikes = all_input_spikes[neuron]
             output_spikes = all_output_spikes[neuron]
             weights = all_weights[neuron]
@@ -494,14 +481,12 @@ class HopfieldNetwork(nn.Module):
         predicted=[]
         max_timestep=8
 
-        #self.dim_size=int(torch.sqrt(torch.Tensor([self.num_neurons]))[0])
         self.dim_size=28
         #thresholds=[240,240,240,500,400,300,200,100]
         for init_state in input:
             state=init_state.clone()
             energy=self.energy(torch.sum(state,dim=0))
 
-            activations=[]
             for step in range(num_iter):
                 indices=torch.randperm(self.num_neurons)
                 for idx in indices:
@@ -535,8 +520,6 @@ class HopfieldNetwork(nn.Module):
             if len(predicted)==0:
                 predicted.append(state.reshape(8,self.dim_size,self.dim_size))
                 
-            #print(max(activations))
-            #print(min(activations))
             # print(torch.max(self.W))
             # print(torch.min(self.W))
             # print(torch.sum(self.W))
@@ -548,6 +531,3 @@ class HopfieldNetwork(nn.Module):
 
         return torch.stack(predicted)
 
-
-        
-############# YOUR CODE ENDS HERE ##########################
